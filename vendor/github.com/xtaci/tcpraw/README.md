@@ -48,4 +48,4 @@ Stable
 
 ## Who is using this
 
-https://github.com/thekhanj/kcptun
+https://github.com/xtaci/kcptun
