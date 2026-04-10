@@ -1,85 +1,40 @@
-// MIT License
-//
-// Copyright (c) 2016-2017 xtaci
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
 package smux
 
 import (
 	"container/heap"
 	"encoding/binary"
-	"errors"
 	"io"
 	"net"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 const (
 	defaultAcceptBacklog = 1024
-	maxShaperSize        = 1024
-	openCloseTimeout     = 30 * time.Second // Timeout for opening/closing streams
 )
-
-// CLASSID represents the class of a frame
-type CLASSID int
-
-const (
-	CLSCTRL CLASSID = iota // prioritized control signal
-	CLSDATA
-)
-
-// timeoutError representing timeouts for operations such as accept, read and write
-//
-// To better cooperate with the standard library, timeoutError should implement the standard library's `net.Error`.
-//
-// For example, using smux to implement net.Listener and work with http.Server, the keep-alive connection (*smux.Stream) will be unexpectedly closed.
-// For more details, see https://github.com/xtaci/smux/pull/99.
-type timeoutError struct{}
-
-func (timeoutError) Error() string   { return "timeout" }
-func (timeoutError) Temporary() bool { return true }
-func (timeoutError) Timeout() bool   { return true }
 
 var (
-	ErrInvalidProtocol           = errors.New("invalid protocol")
-	ErrConsumed                  = errors.New("peer consumed more than sent")
-	ErrGoAway                    = errors.New("stream id overflows, should start a new connection")
-	ErrTimeout         net.Error = &timeoutError{}
-	ErrWouldBlock                = errors.New("operation would block on IO")
+	errInvalidProtocol = errors.New("invalid protocol")
+	errGoAway          = errors.New("stream id overflows, should start a new connection")
+	errTimeout         = errors.New("timeout")
 )
 
-// writeRequest represents a request to write a frame
 type writeRequest struct {
-	class  CLASSID
+	prio   uint64
 	frame  Frame
-	seq    uint32
 	result chan writeResult
 }
 
-// writeResult represents the result of a write request
 type writeResult struct {
 	n   int
 	err error
+}
+
+type buffersWriter interface {
+	WriteBuffers(v [][]byte) (n int, err error)
 }
 
 // Session defines a multiplexed connection for streams
@@ -93,7 +48,7 @@ type Session struct {
 	bucket       int32         // token bucket
 	bucketNotify chan struct{} // used for waiting for tokens
 
-	streams    map[uint32]*stream // all streams in this session
+	streams    map[uint32]*Stream // all streams in this session
 	streamLock sync.Mutex         // locks streams
 
 	die     chan struct{} // flag session has died
@@ -112,7 +67,7 @@ type Session struct {
 	chProtoError   chan struct{}
 	protoErrorOnce sync.Once
 
-	chAccepts chan *stream
+	chAccepts chan *Stream
 
 	dataReady int32 // flag data has arrived
 
@@ -120,9 +75,8 @@ type Session struct {
 
 	deadline atomic.Value
 
-	requestID uint32            // Monotonic increasing write request ID
-	shaper    chan writeRequest // a shaper for writing
-	writes    chan writeRequest
+	shaper chan writeRequest // a shaper for writing
+	writes chan writeRequest
 }
 
 func newSession(config *Config, conn io.ReadWriteCloser, client bool) *Session {
@@ -130,8 +84,8 @@ func newSession(config *Config, conn io.ReadWriteCloser, client bool) *Session {
 	s.die = make(chan struct{})
 	s.conn = conn
 	s.config = config
-	s.streams = make(map[uint32]*stream)
-	s.chAccepts = make(chan *stream, defaultAcceptBacklog)
+	s.streams = make(map[uint32]*Stream)
+	s.chAccepts = make(chan *Stream, defaultAcceptBacklog)
 	s.bucket = int32(config.MaxReceiveBuffer)
 	s.bucketNotify = make(chan struct{}, 1)
 	s.shaper = make(chan writeRequest)
@@ -149,23 +103,21 @@ func newSession(config *Config, conn io.ReadWriteCloser, client bool) *Session {
 	go s.shaperLoop()
 	go s.recvLoop()
 	go s.sendLoop()
-	if !config.KeepAliveDisabled {
-		go s.keepalive()
-	}
+	go s.keepalive()
 	return s
 }
 
 // OpenStream is used to create a new stream
 func (s *Session) OpenStream() (*Stream, error) {
 	if s.IsClosed() {
-		return nil, io.ErrClosedPipe
+		return nil, errors.WithStack(io.ErrClosedPipe)
 	}
 
 	// generate stream id
 	s.nextStreamIDLock.Lock()
 	if s.goAway > 0 {
 		s.nextStreamIDLock.Unlock()
-		return nil, ErrGoAway
+		return nil, errors.WithStack(errGoAway)
 	}
 
 	s.nextStreamID += 2
@@ -173,41 +125,27 @@ func (s *Session) OpenStream() (*Stream, error) {
 	if sid == sid%2 { // stream-id overflows
 		s.goAway = 1
 		s.nextStreamIDLock.Unlock()
-		return nil, ErrGoAway
+		return nil, errors.WithStack(errGoAway)
 	}
 	s.nextStreamIDLock.Unlock()
 
 	stream := newStream(sid, s.config.MaxFrameSize, s)
 
-	if _, err := s.writeControlFrame(newFrame(byte(s.config.Version), cmdSYN, sid)); err != nil {
-		return nil, err
+	if _, err := s.writeFrame(newFrame(cmdSYN, sid)); err != nil {
+		return nil, errors.WithStack(err)
 	}
 
 	s.streamLock.Lock()
 	defer s.streamLock.Unlock()
 	select {
-	case <-s.chSocketReadError:
-		return nil, s.socketReadError.Load().(error)
 	case <-s.chSocketWriteError:
 		return nil, s.socketWriteError.Load().(error)
 	case <-s.die:
-		return nil, io.ErrClosedPipe
+		return nil, errors.WithStack(io.ErrClosedPipe)
 	default:
 		s.streams[sid] = stream
-		wrapper := &Stream{stream: stream}
-		// NOTE(x): disabled finalizer for issue #997
-		/*
-			runtime.SetFinalizer(wrapper, func(s *Stream) {
-				s.Close()
-			})
-		*/
-		return wrapper, nil
+		return stream, nil
 	}
-}
-
-// Open returns a generic ReadWriteCloser
-func (s *Session) Open() (io.ReadWriteCloser, error) {
-	return s.OpenStream()
 }
 
 // AcceptStream is used to block until the next available stream
@@ -222,25 +160,16 @@ func (s *Session) AcceptStream() (*Stream, error) {
 
 	select {
 	case stream := <-s.chAccepts:
-		wrapper := &Stream{stream: stream}
-		runtime.SetFinalizer(wrapper, func(s *Stream) {
-			s.Close()
-		})
-		return wrapper, nil
+		return stream, nil
 	case <-deadline:
-		return nil, ErrTimeout
+		return nil, errors.WithStack(errTimeout)
 	case <-s.chSocketReadError:
 		return nil, s.socketReadError.Load().(error)
 	case <-s.chProtoError:
 		return nil, s.protoError.Load().(error)
 	case <-s.die:
-		return nil, io.ErrClosedPipe
+		return nil, errors.WithStack(io.ErrClosedPipe)
 	}
-}
-
-// Accept Returns a generic ReadWriteCloser instead of smux.Stream
-func (s *Session) Accept() (io.ReadWriteCloser, error) {
-	return s.AcceptStream()
 }
 
 // Close is used to close the session and all streams.
@@ -259,14 +188,8 @@ func (s *Session) Close() error {
 		s.streamLock.Unlock()
 		return s.conn.Close()
 	} else {
-		return io.ErrClosedPipe
+		return errors.WithStack(io.ErrClosedPipe)
 	}
-}
-
-// CloseChan can be used by someone who wants to be notified immediately when this
-// session is closed
-func (s *Session) CloseChan() <-chan struct{} {
-	return s.die
 }
 
 // notifyBucket notifies recvLoop that bucket is available
@@ -348,15 +271,12 @@ func (s *Session) RemoteAddr() net.Addr {
 // notify the session that a stream has closed
 func (s *Session) streamClosed(sid uint32) {
 	s.streamLock.Lock()
-	if stream, ok := s.streams[sid]; ok {
-		n := stream.recycleTokens()
-		if n > 0 { // return remaining tokens to the bucket
-			if atomic.AddInt32(&s.bucket, int32(n)) > 0 {
-				s.notifyBucket()
-			}
+	if n := s.streams[sid].recycleTokens(); n > 0 { // return remaining tokens to the bucket
+		if atomic.AddInt32(&s.bucket, int32(n)) > 0 {
+			s.notifyBucket()
 		}
-		delete(s.streams, sid)
 	}
+	delete(s.streams, sid)
 	s.streamLock.Unlock()
 }
 
@@ -370,7 +290,6 @@ func (s *Session) returnTokens(n int) {
 // recvLoop keeps on reading from underlying connection if tokens are available
 func (s *Session) recvLoop() {
 	var hdr rawHeader
-	var updHdr updHeader
 
 	for {
 		for atomic.LoadInt32(&s.bucket) <= 0 && !s.IsClosed() {
@@ -384,14 +303,14 @@ func (s *Session) recvLoop() {
 		// read header first
 		if _, err := io.ReadFull(s.conn, hdr[:]); err == nil {
 			atomic.StoreInt32(&s.dataReady, 1)
-			if hdr.Version() != byte(s.config.Version) {
-				s.notifyProtoError(ErrInvalidProtocol)
+			if hdr.Version() != version {
+				s.notifyProtoError(errors.WithStack(errInvalidProtocol))
 				return
 			}
 			sid := hdr.StreamID()
 			switch hdr.Cmd() {
 			case cmdNOP:
-			case cmdSYN: // stream opening
+			case cmdSYN:
 				s.streamLock.Lock()
 				if _, ok := s.streams[sid]; !ok {
 					stream := newStream(sid, s.config.MaxFrameSize, s)
@@ -402,56 +321,40 @@ func (s *Session) recvLoop() {
 					}
 				}
 				s.streamLock.Unlock()
-			case cmdFIN: // stream closing
+			case cmdFIN:
 				s.streamLock.Lock()
 				if stream, ok := s.streams[sid]; ok {
 					stream.fin()
 					stream.notifyReadEvent()
 				}
 				s.streamLock.Unlock()
-			case cmdPSH: // data frame
+			case cmdPSH:
 				if hdr.Length() > 0 {
-					pNewbuf := defaultAllocator.Get(int(hdr.Length()))
-					if written, err := io.ReadFull(s.conn, *pNewbuf); err == nil {
+					newbuf := defaultAllocator.Get(int(hdr.Length()))
+					if written, err := io.ReadFull(s.conn, newbuf); err == nil {
 						s.streamLock.Lock()
 						if stream, ok := s.streams[sid]; ok {
-							stream.pushBytes(pNewbuf)
-							// a stream used some token
+							stream.pushBytes(newbuf)
 							atomic.AddInt32(&s.bucket, -int32(written))
 							stream.notifyReadEvent()
-						} else {
-							// data directed to a missing/closed stream, recycle the buffer immediately.
-							defaultAllocator.Put(pNewbuf)
 						}
 						s.streamLock.Unlock()
 					} else {
-						s.notifyReadError(err)
+						s.notifyReadError(errors.WithStack(err))
 						return
 					}
 				}
-			case cmdUPD: // a window update signal
-				if _, err := io.ReadFull(s.conn, updHdr[:]); err == nil {
-					s.streamLock.Lock()
-					if stream, ok := s.streams[sid]; ok {
-						stream.update(updHdr.Consumed(), updHdr.Window())
-					}
-					s.streamLock.Unlock()
-				} else {
-					s.notifyReadError(err)
-					return
-				}
 			default:
-				s.notifyProtoError(ErrInvalidProtocol)
+				s.notifyProtoError(errors.WithStack(errInvalidProtocol))
 				return
 			}
 		} else {
-			s.notifyReadError(err)
+			s.notifyReadError(errors.WithStack(err))
 			return
 		}
 	}
 }
 
-// keepalive sends NOP frame to peer to keep the connection alive, and detect dead peers
 func (s *Session) keepalive() {
 	tickerPing := time.NewTicker(s.config.KeepAliveInterval)
 	tickerTimeout := time.NewTicker(s.config.KeepAliveTimeout)
@@ -460,16 +363,12 @@ func (s *Session) keepalive() {
 	for {
 		select {
 		case <-tickerPing.C:
-			s.writeFrameInternal(newFrame(byte(s.config.Version), cmdNOP, 0), tickerPing.C, CLSCTRL)
+			s.writeFrameInternal(newFrame(cmdNOP, 0), tickerPing.C, 0)
 			s.notifyBucket() // force a signal to the recvLoop
 		case <-tickerTimeout.C:
 			if !atomic.CompareAndSwapInt32(&s.dataReady, 1, 0) {
-				// recvLoop may block while bucket is 0, in this case,
-				// session should not be closed.
-				if atomic.LoadInt32(&s.bucket) > 0 {
-					s.Close()
-					return
-				}
+				s.Close()
+				return
 			}
 		case <-s.die:
 			return
@@ -477,16 +376,13 @@ func (s *Session) keepalive() {
 	}
 }
 
-// shaperLoop implements a priority queue for write requests,
-// some control messages are prioritized over data messages
+// shaper shapes the sending sequence among streams
 func (s *Session) shaperLoop() {
 	var reqs shaperHeap
 	var next writeRequest
 	var chWrite chan writeRequest
-	var chShaper chan writeRequest
 
 	for {
-		// chWrite is not available until it has packet to send
 		if len(reqs) > 0 {
 			chWrite = s.writes
 			next = heap.Pop(&reqs).(writeRequest)
@@ -494,22 +390,10 @@ func (s *Session) shaperLoop() {
 			chWrite = nil
 		}
 
-		// control heap size, chShaper is not available until packets are less than maximum allowed
-		if len(reqs) >= maxShaperSize {
-			chShaper = nil
-		} else {
-			chShaper = s.shaper
-		}
-
-		// assertion on non nil
-		if chShaper == nil && chWrite == nil {
-			panic("both channel are nil")
-		}
-
 		select {
 		case <-s.die:
 			return
-		case r := <-chShaper:
+		case r := <-s.shaper:
 			if chWrite != nil { // next is valid, reshape
 				heap.Push(&reqs, next)
 			}
@@ -519,17 +403,13 @@ func (s *Session) shaperLoop() {
 	}
 }
 
-// sendLoop sends frames to the underlying connection
 func (s *Session) sendLoop() {
 	var buf []byte
 	var n int
 	var err error
 	var vec [][]byte // vector for writeBuffers
 
-	bw, ok := s.conn.(interface {
-		WriteBuffers(v [][]byte) (n int, err error)
-	})
-
+	bw, ok := s.conn.(buffersWriter)
 	if ok {
 		buf = make([]byte, headerSize)
 		vec = make([][]byte, 2)
@@ -547,7 +427,6 @@ func (s *Session) sendLoop() {
 			binary.LittleEndian.PutUint16(buf[2:], uint16(len(request.frame.data)))
 			binary.LittleEndian.PutUint32(buf[4:], request.frame.sid)
 
-			// support for scatter-gather I/O
 			if len(vec) > 0 {
 				vec[0] = buf[:headerSize]
 				vec[1] = request.frame.data
@@ -564,7 +443,7 @@ func (s *Session) sendLoop() {
 
 			result := writeResult{
 				n:   n,
-				err: err,
+				err: errors.WithStack(err),
 			}
 
 			request.result <- result
@@ -572,48 +451,44 @@ func (s *Session) sendLoop() {
 
 			// store conn error
 			if err != nil {
-				s.notifyWriteError(err)
+				s.notifyWriteError(errors.WithStack(err))
 				return
 			}
 		}
 	}
 }
 
-// writeControlFrame writes the control frame to the underlying connection
+// writeFrame writes the frame to the underlying connection
 // and returns the number of bytes written if successful
-func (s *Session) writeControlFrame(f Frame) (n int, err error) {
-	timer := time.NewTimer(openCloseTimeout)
-	defer timer.Stop()
-
-	return s.writeFrameInternal(f, timer.C, CLSCTRL)
+func (s *Session) writeFrame(f Frame) (n int, err error) {
+	return s.writeFrameInternal(f, nil, 0)
 }
 
 // internal writeFrame version to support deadline used in keepalive
-func (s *Session) writeFrameInternal(f Frame, deadline <-chan time.Time, class CLASSID) (int, error) {
+func (s *Session) writeFrameInternal(f Frame, deadline <-chan time.Time, prio uint64) (int, error) {
 	req := writeRequest{
-		class:  class,
+		prio:   prio,
 		frame:  f,
-		seq:    atomic.AddUint32(&s.requestID, 1),
 		result: make(chan writeResult, 1),
 	}
 	select {
 	case s.shaper <- req:
 	case <-s.die:
-		return 0, io.ErrClosedPipe
+		return 0, errors.WithStack(io.ErrClosedPipe)
 	case <-s.chSocketWriteError:
 		return 0, s.socketWriteError.Load().(error)
 	case <-deadline:
-		return 0, ErrTimeout
+		return 0, errors.WithStack(errTimeout)
 	}
 
 	select {
 	case result := <-req.result:
-		return result.n, result.err
+		return result.n, errors.WithStack(result.err)
 	case <-s.die:
-		return 0, io.ErrClosedPipe
+		return 0, errors.WithStack(io.ErrClosedPipe)
 	case <-s.chSocketWriteError:
 		return 0, s.socketWriteError.Load().(error)
 	case <-deadline:
-		return 0, ErrTimeout
+		return 0, errors.WithStack(errTimeout)
 	}
 }

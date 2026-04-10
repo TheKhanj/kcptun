@@ -90,7 +90,7 @@ Random permutation disrupts [locality](https://en.wikipedia.org/wiki/Principle_o
 
 The diagram clearly demonstrates that switching pads for every byte results in low performance, whereas switching pads every 8 bytes yields adequate performance.
 
-Try directly from https://github.com/thekhanj/kcptun/releases with the ```-QPP``` option enabled.
+Try directly from https://github.com/xtaci/kcptun/releases with the ```-QPP``` option enabled.
 
 #### Performance
 In modern CPUs, the latest QPP optimization can easily achieve speeds exceeding 1GB/s.
