@@ -18,24 +18,24 @@
 
 [![Release][13]][14] [![Powered][17]][18] [![MIT licensed][11]][12] [![Build Status][3]][4] [![Go Report Card][5]][6] [![Downloads][15]][16] [![Docker][1]][2] 
 
-[1]: https://img.shields.io/docker/pulls/xtaci/kcptun
-[2]: https://hub.docker.com/r/xtaci/kcptun
-[3]: https://img.shields.io/github/created-at/xtaci/kcptun
-[4]: https://img.shields.io/github/created-at/xtaci/kcptun
-[5]: https://goreportcard.com/badge/github.com/xtaci/kcptun
-[6]: https://goreportcard.com/report/github.com/xtaci/kcptun
-[11]: https://img.shields.io/github/license/xtaci/kcptun
+[1]: https://img.shields.io/docker/pulls/thekhanj/kcptun
+[2]: https://hub.docker.com/r/thekhanj/kcptun
+[3]: https://img.shields.io/github/created-at/thekhanj/kcptun
+[4]: https://img.shields.io/github/created-at/thekhanj/kcptun
+[5]: https://goreportcard.com/badge/github.com/thekhanj/kcptun
+[6]: https://goreportcard.com/report/github.com/thekhanj/kcptun
+[11]: https://img.shields.io/github/license/thekhanj/kcptun
 [12]: LICENSE.md
-[13]: https://img.shields.io/github/v/release/xtaci/kcptun?color=orange
-[14]: https://github.com/xtaci/kcptun/releases/latest
-[15]: https://img.shields.io/github/downloads/xtaci/kcptun/total.svg?maxAge=1800&color=orange
-[16]: https://github.com/xtaci/kcptun/releases
+[13]: https://img.shields.io/github/v/release/thekhanj/kcptun?color=orange
+[14]: https://github.com/thekhanj/kcptun/releases/latest
+[15]: https://img.shields.io/github/downloads/thekhanj/kcptun/total.svg?maxAge=1800&color=orange
+[16]: https://github.com/thekhanj/kcptun/releases
 [17]: https://img.shields.io/badge/KCP-Powered-blue.svg
 [18]: https://github.com/skywind3000/kcp
 
 <img src="assets/kcptun.png" alt="kcptun" height="300px"/>
 
-> *Disclaimer: kcptun maintains a single website — [github.com/xtaci/kcptun](https://github.com/xtaci/kcptun). Any websites other than [github.com/xtaci/kcptun](https://github.com/xtaci/kcptun) are not endorsed by xtaci.*
+> *Disclaimer: kcptun maintains a single website — [github.com/thekhanj/kcptun](https://github.com/thekhanj/kcptun). Any websites other than [github.com/thekhanj/kcptun](https://github.com/thekhanj/kcptun) are not endorsed by xtaci.*
 
 ### Requirements
 
@@ -46,13 +46,13 @@
 | CPU | ANY | amd64 with AES-NI & AVX2 |
 
 *NOTE: if you are using kvm, make sure the guest os can do AES instructions*
-<img src="https://github.com/xtaci/kcptun/assets/2346725/9358e8e5-2a4a-4be9-9859-62f1aaa553b0" alt="cpuinfo" height="400px"/>
+<img src="https://github.com/thekhanj/kcptun/assets/2346725/9358e8e5-2a4a-4be9-9859-62f1aaa553b0" alt="cpuinfo" height="400px"/>
 
 ### QuickStart
 
 Download:
 
-`curl -L  https://raw.githubusercontent.com/xtaci/kcptun/master/download.sh | sh`
+`curl -L  https://raw.githubusercontent.com/thekhanj/kcptun/master/download.sh | sh`
 
 Increase the number of open files on your server, as:
 
@@ -74,7 +74,7 @@ You can also increase the per-socket buffer by adding parameter(default 4MB):
 ```
 for **slow processors**, increasing this buffer is **CRITICAL** to receive packets properly.
 
-Download a corresponding one from precompiled [Releases](https://github.com/xtaci/kcptun/releases).
+Download a corresponding one from precompiled [Releases](https://github.com/thekhanj/kcptun/releases).
 
 ```
 KCP Client: ./client_darwin_amd64 -r "KCP_SERVER_IP:4000" -l ":8388" -mode fast3 -nocomp -autoexpire 900 -sockbuf 16777217 -dscp 46
@@ -91,7 +91,7 @@ which tunnels the original connection:
 ### Build from source
 
 ```
-$ git clone https://github.com/xtaci/kcptun.git
+$ git clone https://github.com/thekhanj/kcptun.git
 $ cd kcptun
 $ ./build-release.sh
 $ cd build
@@ -324,7 +324,7 @@ The encryption performance in kcptun is as fast as in openssl library(if not fas
 #### Quantum Resistance
 Quantum Resistance, also known as quantum-secure, post-quantum, or quantum-safe cryptography, refers to cryptographic algorithms that can withstand potential code-breaking attempts by quantum computer.
 In kcptun, after v20240701, it adapts [QPP](https://github.com/xtaci/qpp) based on [Kuang's Quantum Permutation Pad](https://epjquantumtechnology.springeropen.com/articles/10.1140/epjqt/s40507-022-00145-y) for quantum-resistent communication.
-![da824f7919f70dd1dfa3be9d2302e4e0](https://github.com/xtaci/kcptun/assets/2346725/7894f5e3-6134-4582-a9fe-e78494d2e417)
+![da824f7919f70dd1dfa3be9d2302e4e0](https://github.com/thekhanj/kcptun/assets/2346725/7894f5e3-6134-4582-a9fe-e78494d2e417)
 
 To enable QPP in kcptun, you need to set: 
 ```

@@ -48,10 +48,10 @@ case "$OS" in
 esac
 
 # Get the latest version number and remove the 'v' prefix
-LATEST_VERSION=$(curl -s https://api.github.com/repos/xtaci/kcptun/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+LATEST_VERSION=$(curl -s https://api.github.com/repos/thekhanj/kcptun/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
 
 # Construct the download URL
-DOWNLOAD_URL="https://github.com/xtaci/kcptun/releases/download/v$LATEST_VERSION/kcptun-$OS-$ARCH-$LATEST_VERSION.tar.gz"
+DOWNLOAD_URL="https://github.com/thekhanj/kcptun/releases/download/v$LATEST_VERSION/kcptun-$OS-$ARCH-$LATEST_VERSION.tar.gz"
 
 # Display the download URL
 echo "Constructed download URL: $DOWNLOAD_URL"

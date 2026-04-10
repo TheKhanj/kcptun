@@ -8,7 +8,7 @@ Release:        1
 Summary:        A Stable & Secure Tunnel based on KCP with N:M multiplexing and FEC
 
 License:        MIT
-URL:            https://github.com/xtaci/kcptun
+URL:            https://github.com/thekhanj/kcptun
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  golang
@@ -36,8 +36,8 @@ A Stable & Secure Tunnel based on KCP with N:M multiplexing and FEC
 
 %build
 LDFLAGS='-s -w -linkmode=external -extldflags -static -X main.VERSION=%{version}'
-go build -ldflags "$LDFLAGS" -o %{name}-server github.com/xtaci/kcptun/server
-go build -ldflags "$LDFLAGS" -o %{name}-client github.com/xtaci/kcptun/client
+go build -ldflags "$LDFLAGS" -o %{name}-server github.com/thekhanj/kcptun/server
+go build -ldflags "$LDFLAGS" -o %{name}-client github.com/thekhanj/kcptun/client
 
 %install
 rm -rf $RPM_BUILD_ROOT

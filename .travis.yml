@@ -5,12 +5,12 @@ before_install:
     - go get github.com/mattn/goveralls
     - go get golang.org/x/tools/cmd/cover
 install:
-    - env GO111MODULE=on go get github.com/xtaci/kcptun/client
-    - env GO111MODULE=on go get github.com/xtaci/kcptun/server
+    - env GO111MODULE=on go get github.com/thekhanj/kcptun/client
+    - env GO111MODULE=on go get github.com/thekhanj/kcptun/server
 before_script:
 script:
-    - cd $HOME/gopath/src/github.com/xtaci/kcptun/client
+    - cd $HOME/gopath/src/github.com/thekhanj/kcptun/client
     - env GO111MODULE=on $HOME/gopath/bin/goveralls -service=travis-ci
-    - cd $HOME/gopath/src/github.com/xtaci/kcptun/server
+    - cd $HOME/gopath/src/github.com/thekhanj/kcptun/server
     - env GO111MODULE=on $HOME/gopath/bin/goveralls -service=travis-ci
     - exit 0
