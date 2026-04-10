@@ -1,6 +1,6 @@
 // The MIT License (MIT)
 //
-// Copyright (c) 2015 xtaci
+// # Copyright (c) 2015 xtaci
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -22,14 +22,44 @@
 
 package kcp
 
-import "golang.org/x/net/ipv4"
-
-const (
-	batchSize = 16
+import (
+	"errors"
+	"sync"
 )
 
-// batchConn defines the interface used in batch IO
-type batchConn interface {
-	WriteBatch(ms []ipv4.Message, flags int) (int, error)
-	ReadBatch(ms []ipv4.Message, flags int) (int, error)
+// pre-allocated error to avoid repeated allocations
+var errBufferSizeMismatch = errors.New("buffer size mismatch")
+
+// A system-wide packet buffer shared among sending, receiving and FEC
+// to mitigate high-frequency memory allocation of packets.
+var defaultBufferPool = newBufferPool(mtuLimit)
+
+type bufferPool struct {
+	xmitBuf sync.Pool
+}
+
+// newBufferPool creates a new buffer pool with buffers of the given size.
+func newBufferPool(size int) *bufferPool {
+	return &bufferPool{
+		xmitBuf: sync.Pool{
+			New: func() any {
+				return make([]byte, size)
+			},
+		},
+	}
+}
+
+// Get retrieves a buffer from the pool.
+func (bp *bufferPool) Get() []byte {
+	return bp.xmitBuf.Get().([]byte)
+}
+
+// Put returns a buffer to the pool.
+func (bp *bufferPool) Put(buf []byte) error {
+	// Only put back buffers of the correct size.
+	if cap(buf) != mtuLimit {
+		return errBufferSizeMismatch
+	}
+	bp.xmitBuf.Put(buf[:cap(buf)]) // reset slice length to full capacity
+	return nil
 }
