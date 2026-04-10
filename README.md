@@ -1,3 +1,19 @@
+> ⚠️**Warning / Archive Notice**
+>
+> I am not the maintainer or a contributor to this project.
+>
+> The original repository is maintained by [xtaci](https://github.com/xtaci).
+>
+> It appears that the commit history of the original project was removed on or around February 9, 2026. I am not sure why this change was made, and I do not want to speculate.
+>
+> This repository is based on a local clone that was last updated on September 13, 2025, before those changes occurred.
+>
+> This is simply an archival snapshot shared for reference purposes.
+>
+> I do not claim ownership of this work, and I fully respect the original maintainer's intent and rights.
+>
+> If the original maintainer prefers this mirror to be removed, please contact me and I will take it down immediately.
+
 # <img src="assets/logo.png" alt="kcptun" height="54px" /> 
 
 [![Release][13]][14] [![Powered][17]][18] [![MIT licensed][11]][12] [![Build Status][3]][4] [![Go Report Card][5]][6] [![Downloads][15]][16] [![Docker][1]][2] 
